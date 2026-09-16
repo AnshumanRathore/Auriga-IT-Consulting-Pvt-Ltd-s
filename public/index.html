@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Box Office — Counter Terminal</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+    rel="stylesheet"
+  />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar__mark">
+      <span class="topbar__bulb" aria-hidden="true"></span>
+      Box Office
+    </div>
+    <div class="topbar__meta" id="clock">Friday, showtime approaching</div>
+  </header>
+
+  <main class="counter" id="counter">
+    <!-- LEFT: show + tier + offers selection -->
+    <section class="panel selection" aria-label="Booking selection">
+      <div class="field">
+        <label for="show-select">Show</label>
+        <select id="show-select"></select>
+        <p class="field__hint" id="show-hint"></p>
+      </div>
+
+      <div class="tiers" id="tiers" aria-label="Seat tiers"></div>
+
+      <div class="offers">
+        <label class="check">
+          <input type="checkbox" id="festival-toggle" />
+          <span>Apply festival discount</span>
+        </label>
+        <label class="check">
+          <input type="checkbox" id="member-toggle" />
+          <span>Member booking</span>
+        </label>
+      </div>
+
+      <div class="actions">
+        <button class="btn btn--ghost" id="reset-btn" type="button">Reset</button>
+        <button class="btn btn--primary" id="book-btn" type="button" disabled>Confirm &amp; book</button>
+      </div>
+
+      <p class="status" id="status" role="status" aria-live="polite"></p>
+    </section>
+
+    <!-- RIGHT: printed-receipt style line-by-line breakup -->
+    <section class="panel receipt-wrap" aria-label="Bill breakup">
+      <div class="receipt" id="receipt">
+        <div class="receipt__empty" id="receipt-empty">
+          Select seats on the left —<br />the bill breakup prints here, line by line.
+        </div>
+        <div id="receipt-body" hidden>
+          <div class="receipt__head">
+            <div class="receipt__title" id="receipt-title">—</div>
+            <div class="receipt__sub" id="receipt-sub">—</div>
+          </div>
+          <div class="receipt__perf" aria-hidden="true"></div>
+          <div class="receipt__lines" id="receipt-lines"></div>
+          <div class="receipt__perf" aria-hidden="true"></div>
+          <div class="receipt__summary" id="receipt-summary"></div>
+          <div class="receipt__perf" aria-hidden="true"></div>
+          <div class="receipt__total" id="receipt-total"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

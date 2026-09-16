@@ -1,0 +1,28 @@
+{
+  "name": "ticket-pricing-engine",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A configurable, currency-exact ticket pricing engine for any cinema box-office counter: tiered seats, availability, stacked offers, convenience fee, slab-based GST, and a line-by-line bill breakup — served via a REST API with a responsive counter UI.",
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "zod": "^4.1.5"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.3",
+    "@types/node": "^24.3.1",
+    "@types/supertest": "^6.0.2",
+    "supertest": "^7.0.0",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}

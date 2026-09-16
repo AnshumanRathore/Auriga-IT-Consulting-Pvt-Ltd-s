@@ -89,3 +89,48 @@ Because these are configuration-driven, I don't need to redesign the entire appl
 I can update the configuration values while keeping the core architecture intact.
 
 That is one of the reasons I designed the system as a reusable pricing engine rather than a single hard-coded calculation script."
+
+***What the Twist means***
+
+Your system now needs to accept a messy price list such as:
+
+Silver, ₹250
+GOLD, 300
+gold, Rs. 300.00
+RECLINER, 599.50
+silver, 250
+Gold, 
+Recliner, -100
+VIP, abc
+
+
+
+INPUT
+────────────────────────
+Silver      ₹250
+GOLD        300
+gold        ₹300.00
+RECLINER    ₹599.50
+silver      250
+Gold        blank
+Recliner    -100
+VIP         abc
+
+             ↓
+
+CLEAN + NORMALIZE
+             ↓
+
+VALID PRICE LIST
+────────────────────────
+Silver       ₹250.00
+Gold         ₹300.00
+Recliner     ₹599.50
+
+             ↓
+
+IMPORT REPORT
+────────────────────────
+Imported:       3
+De-duplicated:  2
+Rejected:       3

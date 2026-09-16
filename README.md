@@ -31,6 +31,7 @@ src/
   types.ts     # domain types + Zod request schemas
   config.ts    # EXAMPLE shows + pricing config (tiers, tax slabs, fee, offers) — swap freely
   pricing.ts   # priceBooking() — the actual pricing pipeline (framework-free)
+  priceImporter.ts # cleans messy seat-class prices and returns an import report
   server.ts    # Express app + routes
   index.ts     # server entrypoint
 public/
@@ -40,6 +41,7 @@ public/
 tests/
   money.test.ts    # rounding + largest-remainder allocator
   pricing.test.ts  # the engine itself — offers, tax slabs, exact-paisa invariants, validation
+  priceImporter.test.ts # normalization, duplicate handling, and rejected price rows
   api.test.ts      # HTTP layer via supertest
 REASONING.md   # design write-up
 AI_LOGS.md     # AI conversation log (see note inside — must be replaced with the real transcript)
@@ -78,9 +80,10 @@ npm start       # runs dist/index.js
 npm test
 ```
 
-27 tests across three files, all passing:
+29 tests across four files, all passing:
 - **money.test.ts** — paise conversion/formatting, rounding, and the largest-remainder allocator (sums always reconcile exactly)
 - **pricing.test.ts** — plain pricing, GST slab boundary behavior, discount stacking + capping (both directions), the exact-paisa/no-leakage invariant under a deliberately awkward discount, both fee-taxation modes, and every validation/rejection path (sold out, over-booked, unknown tier, empty booking)
+- **priceImporter.test.ts** — normalizes case and currency formats, keeps the first valid price per seat class, and reports duplicate and rejected rows
 - **api.test.ts** — the HTTP layer: health check, listing shows, quoting, booking (and that booking actually decrements availability), and error status codes (404/409/400)
 
 ## API reference
@@ -116,6 +119,18 @@ always exactly equals the sum of `lines[].lineTotalPaise`.
 Errors: `404` unknown show, `400` malformed request, `409` with an
 `errors[]` array (e.g. `SOLD_OUT`, `UNKNOWN_TIER`, `INVALID_QUANTITY`,
 `EMPTY_BOOKING`) if the booking itself is invalid.
+
+### Importing a messy seat-class price list
+
+`importPriceList()` in `src/priceImporter.ts` accepts rows shaped like
+`{ seatClass, price }`. It normalizes supported seat classes (`Silver`,
+`Gold`, and `Recliner`) and rupee formats such as `₹250`, `Rs. 300.00`,
+`INR 1,250.50`, and plain numbers. Prices are returned as integer paise.
+
+The returned report contains the cleaned `imported` list, row-level
+`duplicates` and `rejected` entries, plus summary counts. Blank, malformed,
+negative, and unknown-seat-class rows are rejected; duplicate names are
+matched case-insensitively and only the first valid row is imported.
 
 ### `POST /api/v1/shows/:showId/book`
 Same request/validation as `/quote`, but on success also decrements

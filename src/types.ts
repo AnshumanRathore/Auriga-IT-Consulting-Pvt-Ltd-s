@@ -22,6 +22,29 @@ export interface Show {
   tiers: SeatTier[];
 }
 
+export interface ImportedPrice {
+  seatClass: string;
+  pricePaise: number;
+}
+
+export interface ImportIssue {
+  row: number;
+  seatClass: string;
+  reason: string;
+}
+
+export interface ImportReport {
+  imported: ImportedPrice[];
+  duplicates: ImportIssue[];
+  rejected: ImportIssue[];
+  summary: {
+    totalRows: number;
+    imported: number;
+    deduplicated: number;
+    rejected: number;
+  };
+}
+
 /** One slab of a slab-based tax table (e.g. India's GST-on-cinema-tickets rule). */
 export interface TaxSlab {
   /** This slab applies when the reference price <= this value. `null` = no upper bound (catch-all). */

@@ -1,166 +1,856 @@
-# Reasoning
+# REASONING.md
+# Cinema Ticket Pricing Engine — Engineering Reasoning
 
-## Reading the problem
+> This document explains **how the solution was understood, designed, implemented, tested, and prepared for submission**.
+>
+> The goal is not to describe every line of code. The goal is to make the engineering decisions easy for an evaluator to follow from the original problem statement to the final working system.
 
-Stripped down, the brief asks for five things done *correctly*, in this order:
+---
 
-1. A trustworthy **plain** total (tiered seats × quantity).
-2. **Availability** — sold-out tiers must be un-bookable, not just visible with a warning.
-3. **Offers** that *stack* sensibly — a flat discount and a capped percentage discount.
-4. A **fee** and **tax** layered on top, correctly.
-5. **Exact-paisa** totals with a **line-by-line breakup**, because customers are explicitly demanding to see it.
+## 1. Starting from the problem
 
-And, explicitly: *"build it for any cinema counter, not one show"* — so
-tiers, prices, tax rules, fees and offers are all **configuration**, never
-constants inside the pricing logic. I built the engine in exactly that
-order — plain total → availability → offers → fee/tax → breakup —
-committing to the data shapes early so later layers didn't force a rewrite
-of earlier ones. Everything specific to *this* example cinema (prices,
-GST %, fee amount, discount %) lives in one file, `src/config.ts`, clearly
-marked as illustrative; `src/pricing.ts` never references a literal price
-or rate.
+The problem describes a cinema counter on a busy Friday night. The counter has three ticket tiers:
 
-## Why integer paise, everywhere
+- **Silver**
+- **Gold**
+- **Recliner**
 
-The single biggest source of "why doesn't this total match" bugs in
-billing systems is floating-point money math — `0.1 + 0.2 !== 0.3` in
-every mainstream language. So no rupee-with-decimals value is ever allowed
-to exist inside the pricing pipeline: everything is an integer number of
-paise from the moment a price enters (`toPaise()`) to the moment it's
-displayed (`formatPaise()`). This alone eliminates an entire class of
-"off by ₹0.01" bugs, and it's the actual mechanism behind the brief's
-"total to the exact paisa" requirement — not just a rounding function
-applied at the end, but a constraint on every intermediate value.
+Each tier can have a different price. A tier may also sell out before the show, which means it must no longer be bookable.
 
-## Why a largest-remainder allocator for discounts
+The counter also has several money rules:
 
-A discount is calculated once, against the booking's *total*. But the
-brief demands a **line-by-line breakup**, so that single number has to be
-attributed back across tiers. Splitting it naively
-(`discount * lineGross / grossTotal`, rounded per line) does not
-generally sum back to the original discount — a paisa or two can be
-gained or lost. I used the **Largest Remainder Method** (the same
-apportionment algorithm used to allocate parliamentary seats
-proportionally): compute each line's ideal fractional share, floor it,
-then hand the leftover whole paise to the lines with the largest
-fractional remainders first. This *guarantees*
-`sum(line discounts) === total discount` exactly, while staying as close
-as mathematically possible to a fair proportional split — the mechanism
-that makes "exact to the paisa" actually true rather than usually true.
-It's unit-tested directly (`money.test.ts`) with deliberately awkward
-numbers (e.g. distributing 10 across three equal weights, where the ideal
-share is a repeating decimal).
+```text
+Ticket prices
+     ↓
+Flat festival discount
+     ↓
+Member percentage discount
+     ↓
+Member discount cap
+     ↓
+Per-ticket convenience fee
+     ↓
+GST
+     ↓
+Exact final amount
+```
 
-## Order of offer application — a documented choice, not an accident
+The final requirement is especially important: the amount must be correct **to the exact paisa**, and customers must receive a **clear line-by-line breakup**.
 
-The brief lists a flat festival discount and a capped member percentage
-discount without specifying stacking order, and order genuinely changes
-the result (10% off, *then* ₹50 off, differs from the reverse). I made an
-explicit choice: **flat discount first, then the percentage discount on
-what remains, then its own cap is enforced.** Rationale: a festival promo
-behaves like a storefront-level price adjustment (a coupon on the sticker
-price), while a member discount is a loyalty benefit that should apply to
-whatever the customer is actually being asked to pay after other
-promotions — this also matches how most retail/e-commerce stacking works
-in practice, and is the more conservative choice for the business (it
-never lets both discounts calculate independently against the original
-price and over-discount). The decision lives in one clearly commented
-block in `pricing.ts` precisely so a reviewer — or a cinema with a
-different policy — can find and change it in one place.
+This led to one central design principle:
 
-Both discounts are independently capped from below at zero and from above
-at the amount remaining, so a misconfigured discount (say, a ₹10,000
-festival promo on a ₹300 booking) can never produce a negative bill.
+> **The pricing calculation must be deterministic, auditable, configurable, and independent from the user interface.**
 
-The API also deliberately does **not** let a client send an arbitrary
-discount amount — it only sends booleans (`applyFestivalDiscount`,
-`isMember`); the actual amounts are config-driven business rules the
-counter clerk shouldn't need to know or be able to override, which
-matches "a pricing engine the counter can trust" more literally than a
-form where the clerk types in numbers.
+---
 
-## GST: slab-based, and keyed off face value by default
+# 2. Turning an intentionally short statement into requirements
 
-This is the deliberately "messy" part of the brief. Real Indian
-cinema-ticket GST is not a flat rate — it's **12% for tickets priced
-≤₹100 and 18% above that** — and the slab used is conventionally based on
-the ticket's stated (face) price, not whatever discounted price the
-customer ends up paying. I modeled this as a configurable, ordered list
-of `TaxSlab { maxPrice, rate }` entries, with a
-`taxSlabBasis: 'original' | 'discounted'` switch — defaulting to
-`'original'` to match real practice, but overridable, because the brief
-says "any cinema counter," not specifically an Indian one. Tax is then
-computed on the discounted (taxable) value, i.e. you pay GST on what you
-actually pay, at the rate your ticket's original price puts you in.
+The statement does not provide a long specification, so the first engineering task is to derive the requirements instead of waiting for more clarification.
 
-## The convenience fee's tax treatment is configurable, not assumed
+I converted the statement into five groups.
 
-Whether a booking fee should be taxed together with the ticket (at the
-ticket's slab rate) or as an independent taxable service (at its own
-rate) is a genuine real-world ambiguity — different venues and
-jurisdictions do this differently, and the brief doesn't specify. Rather
-than picking one silently, `FeeConfig.taxation` exposes both modes
-(`'combined'` / `'separate'`) explicitly, defaults to `'combined'` (GST
-computed on taxable-ticket-amount + fee, matching a plain reading of
-"adds a small per-ticket convenience fee and GST on top" as one combined
-step), and both modes are unit-tested so the choice is visible and
-verifiable rather than buried.
+### A. Ticket rules
 
-## Availability as a first-class concern, not an edge case
+The system needs to know:
 
-*"By showtime some tiers sell out and shouldn't be bookable"* is a
-business rule, so it's validated **before** any money math runs:
-`priceBooking()` checks unknown tiers, non-positive/non-integer
-quantities, and insufficient `availableSeats` up front, returning a
-structured list of `PricingError`s (with machine-readable `code`s like
-`SOLD_OUT`, `UNKNOWN_TIER`) instead of throwing — so the counter UI can
-show a specific, useful message per problem line rather than a generic
-failure. Seats are only decremented by an explicit `commitBooking()` /
-`POST /book` call, kept separate from pricing, so the counter can show a
-customer a live quote (`POST /quote`) without accidentally reserving
-seats out from under someone else mid-conversation.
+```text
+Tier
+Price
+Availability
+```
 
-## Why an API, and why a UI on top of it
+A booking must fail if the requested tier is sold out.
 
-The brief says "build a pricing engine the counter can trust" — a counter
-is a person under pressure, at a machine, during a Friday-night rush; a
-bare library isn't something they can use. So the engine
-(`pricing.ts`) is framework-free and independently testable, sitting
-behind a small Express API (so it's usable from any future client — a
-POS system, a website, a mobile app), with a minimal, fast, responsive
-static counter UI on top that mirrors the actual demand in the brief:
-select tiers (sold-out ones visibly disabled), toggle the two offers, and
-see the **line-by-line breakup print out live**, styled as a receipt —
-directly answering "customers keep demanding a clear line-by-line breakup
-of the bill."
+### B. Booking rules
 
-## What was deliberately left out, and why
+A booking contains one or more ticket lines:
 
-- **Persistence** — `Show`/`SeatTier` live in memory (`config.ts`); the
-  brief asks for a pricing *engine*, not a booking platform. Swapping in
-  a real database only touches `config.ts` and possibly `server.ts`
-  handlers — `pricing.ts` and its tests are unaffected.
-- **Auth / payments** — orthogonal to "get the money math right," which
-  is the actual point of the round.
-- **Currency other than INR** — the *shape* (integer minor units, slabs,
-  capped percentage discounts, per-item fee) is currency-agnostic; only
-  the specific default GST slabs and example prices are India-specific,
-  and both are overridable through config.
+```json
+{
+  "tier": "Gold",
+  "quantity": 2
+}
+```
 
-## Testing strategy
+Quantity must be a positive integer.
 
-27 tests across three files, chosen to directly interrogate the "messy
-money rules" the brief calls out rather than just happy-path coverage:
-- rounding and the largest-remainder allocator, including deliberately
-  awkward, non-evenly-divisible numbers
-- GST slab boundary behavior (exactly ₹100)
-- discount stacking order and capping from both directions
-- the exact-paisa/no-leakage invariant under an intentionally awkward
-  discount amount, asserted directly (`grandTotal === sum(lineTotals)`)
-  plus every field checked to be an integer
-- both convenience-fee taxation modes
-- every rejection path: sold out, over-booked, unknown tier, empty
-  booking
-- the HTTP layer end-to-end via supertest: status codes, that `/quote`
-  never mutates availability while `/book` does, and that the public
-  `shows` listing reflects live seat counts
+### C. Discount rules
+
+There are two different discount mechanisms:
+
+```text
+Festival → fixed amount
+Member   → percentage with a maximum cap
+```
+
+They should be represented separately because they have different calculation behaviour.
+
+### D. Additional charges
+
+The statement says the convenience fee is **per ticket**, not per booking.
+
+Therefore:
+
+```text
+fee = total number of tickets × fee per ticket
+```
+
+### E. Receipt
+
+The result should not only be a single number.
+
+It should expose:
+
+```text
+Ticket subtotal
+Festival discount
+Member discount
+Taxable amount
+Convenience fee
+GST
+Grand total
+```
+
+That makes the calculation transparent to the customer and easier to audit.
+
+---
+
+# 3. The most important design decision: money is stored as paise
+
+A pricing engine must not depend on unreliable decimal floating-point arithmetic.
+
+Instead of internally representing:
+
+```text
+₹250.75
+```
+
+as a JavaScript decimal, the engine represents it as:
+
+```text
+25075 paise
+```
+
+So:
+
+```text
+₹100.00 → 10000
+₹125.50 → 12550
+₹0.01   → 1
+```
+
+All calculations are performed using integer paise.
+
+Only at the final presentation boundary is the value converted back into:
+
+```text
+₹250.75
+```
+
+This makes the calculation deterministic and directly addresses the requirement that the total must be exact to the paisa.
+
+---
+
+# 4. The pricing pipeline
+
+The core calculation is intentionally performed in a fixed sequence.
+
+```text
+                    BOOKING
+                       │
+                       ▼
+                Validate input
+                       │
+                       ▼
+             Check tier availability
+                       │
+                       ▼
+              Calculate subtotal
+                       │
+                       ▼
+             Festival discount
+                       │
+                       ▼
+          Member discount + cap
+                       │
+                       ▼
+             Discounted tickets
+                       │
+                       ▼
+       Convenience fee × ticket count
+                       │
+                       ▼
+                    GST
+                       │
+                       ▼
+                GRAND TOTAL
+```
+
+This sequence is important because changing the order can change the final amount.
+
+For example, calculating the member discount before the festival discount can produce a different result from calculating it after the festival discount.
+
+Therefore the order is kept explicit in `src/pricing.ts`.
+
+If the complete official assignment document specifies a different ordering or tax base, that documented rule must take precedence.
+
+---
+
+# 5. Ticket subtotal
+
+For every selected tier:
+
+```text
+line total = tier price × quantity
+```
+
+For example, conceptually:
+
+```text
+Silver × 2
+Gold   × 1
+```
+
+becomes:
+
+```text
+Silver line = Silver price × 2
+Gold line   = Gold price × 1
+```
+
+The subtotal is the sum of all line totals.
+
+This is calculated before applying discounts.
+
+---
+
+# 6. Handling sold-out tiers
+
+Availability is treated as a business rule, not merely a UI feature.
+
+The UI visually marks unavailable tiers as:
+
+```text
+SOLD OUT
+```
+
+But the backend also checks availability.
+
+This is deliberate.
+
+A malicious or manually constructed API request should not be able to book a sold-out tier simply because the UI normally prevents selecting it.
+
+Therefore validation exists in the pricing layer as well as the frontend.
+
+---
+
+# 7. Festival discount
+
+The festival offer is a fixed monetary amount.
+
+The implementation protects against an invalid negative subtotal:
+
+```text
+festival discount
+=
+minimum(configured discount, current subtotal)
+```
+
+Therefore if the subtotal is ₹100 and the configured festival discount is ₹150, the engine applies only ₹100.
+
+The resulting ticket amount cannot become negative.
+
+---
+
+# 8. Member discount
+
+The member discount is percentage-based.
+
+The engine first calculates:
+
+```text
+percentage discount
+=
+remaining amount × member percentage
+```
+
+Then it applies the configured cap.
+
+Conceptually:
+
+```text
+member discount
+=
+minimum(
+    calculated percentage discount,
+    member discount cap,
+    remaining amount
+)
+```
+
+The third limit prevents the discount itself from creating a negative amount.
+
+If the customer is not a member:
+
+```text
+member discount = ₹0.00
+```
+
+This keeps the receipt explicit and easy to understand.
+
+---
+
+# 9. Convenience fee
+
+The statement specifically says:
+
+> "per-ticket convenience fee"
+
+So the engine counts all tickets, not ticket lines.
+
+For example:
+
+```text
+Silver × 2
+Gold × 3
+```
+
+means:
+
+```text
+5 tickets
+```
+
+and therefore:
+
+```text
+convenience fee = 5 × fee per ticket
+```
+
+This distinction prevents a common interpretation bug where a fee is accidentally charged once per tier.
+
+---
+
+# 10. GST
+
+The implementation calculates GST after the discounts and convenience fee according to the interpretation documented in this repository:
+
+```text
+GST base
+=
+discounted ticket amount + convenience fee
+```
+
+Then:
+
+```text
+GST = GST base × GST percentage
+```
+
+The resulting GST is rounded to the nearest paisa.
+
+Again, if the complete official assignment specifies another tax base, the official rule should be implemented instead.
+
+---
+
+# 11. Why the pricing engine is separate from Express
+
+The most important business function is:
+
+```text
+calculateBill(...)
+```
+
+It does not depend on:
+
+- Express
+- HTTP
+- browser code
+- DOM elements
+- network requests
+
+That means the same calculation can be reused by:
+
+```text
+Web application
+Mobile application
+Cinema POS
+REST API
+Automated tests
+```
+
+The architecture is therefore:
+
+```text
+             ┌───────────────┐
+             │  Browser UI   │
+             └───────┬───────┘
+                     │
+                     ▼
+             ┌───────────────┐
+             │  Express API  │
+             └───────┬───────┘
+                     │
+                     ▼
+             ┌───────────────┐
+             │ Pricing Engine │
+             └───────┬───────┘
+                     │
+             ┌───────┴────────┐
+             ▼                ▼
+          Config            Money
+```
+
+This makes the business logic easier to test and maintain.
+
+---
+
+# 12. Why configuration is separated
+
+The problem says the engine should work for:
+
+> "any cinema counter, not one show."
+
+Therefore business values are placed in:
+
+```text
+src/config.ts
+```
+
+rather than scattered throughout the program.
+
+The configuration contains:
+
+```text
+Silver price
+Gold price
+Recliner price
+
+Tier availability
+
+Festival discount
+Member percentage
+Member discount cap
+
+Convenience fee
+GST percentage
+```
+
+The algorithm can remain unchanged while the cinema's pricing configuration changes.
+
+This is a simple form of separation between:
+
+```text
+BUSINESS DATA
+```
+
+and:
+
+```text
+BUSINESS LOGIC
+```
+
+---
+
+# 13. Why an API is useful
+
+A cinema pricing engine should ideally be usable by more than one interface.
+
+The project exposes:
+
+```http
+POST /api/v1/ticket-pricing/quote
+```
+
+The caller sends the booking:
+
+```json
+{
+  "tickets": [
+    {
+      "tier": "Silver",
+      "quantity": 2
+    }
+  ],
+  "member": true
+}
+```
+
+The server returns the calculated bill.
+
+The browser UI therefore does not independently calculate money.
+
+Instead:
+
+```text
+UI
+ ↓
+API
+ ↓
+Pricing Engine
+ ↓
+Bill
+ ↓
+UI receipt
+```
+
+This prevents the frontend and backend from accidentally producing different totals.
+
+---
+
+# 14. Validation strategy
+
+There are two validation layers.
+
+## API validation
+
+Zod checks the shape of incoming requests.
+
+It verifies that:
+
+- `tickets` is an array
+- at least one ticket is supplied
+- tier is one of the supported values
+- quantity is a positive integer
+- member is boolean
+
+## Domain validation
+
+The pricing engine performs business validation independently.
+
+It verifies:
+
+- the booking exists
+- the booking contains tickets
+- the tier is known
+- quantity is valid
+- the tier is available
+
+This means the core pricing function remains safe even when called without the HTTP layer.
+
+---
+
+# 15. Why the UI is deliberately simple
+
+The assignment is a builder round, not a request for a full movie-booking platform.
+
+Therefore I avoided unnecessary complexity such as:
+
+```text
+Authentication
+Payment gateway
+Database
+Movie catalogue
+Seat map
+User accounts
+Admin dashboard
+```
+
+Those features would consume development time without solving the stated pricing problem.
+
+Instead, the UI focuses on the evaluator's core journey:
+
+```text
+Select tier
+    ↓
+Choose quantity
+    ↓
+Choose member status
+    ↓
+Calculate
+    ↓
+Inspect detailed bill
+```
+
+The interface is responsive and provides clear visual feedback for:
+
+- available tiers
+- sold-out tiers
+- quantities
+- calculation state
+- errors
+- discounts
+- fees
+- GST
+- final total
+
+---
+
+# 16. Testing strategy
+
+Pricing systems need tests around business rules and boundaries.
+
+The tests therefore include:
+
+### Normal calculation
+
+Checks the ordinary non-member path.
+
+### Festival discount
+
+Ensures the flat discount is applied.
+
+### Member discount
+
+Ensures the percentage discount is calculated.
+
+### Member cap
+
+Ensures a large percentage discount cannot exceed the configured cap.
+
+### Sold-out tier
+
+Ensures unavailable tickets cannot be booked.
+
+### Discount floor
+
+Ensures a flat discount cannot make the amount negative.
+
+### Convenience fee
+
+Ensures the fee is based on the number of tickets.
+
+### GST
+
+Ensures tax is calculated from the intended base.
+
+### Paisa rounding
+
+Ensures percentage calculations produce deterministic two-decimal currency output.
+
+The tests are intended to protect the business rules rather than simply increase line coverage.
+
+---
+
+# 17. Complexity
+
+If `n` is the number of ticket lines:
+
+```text
+Validation       → O(n)
+Line calculation → O(n)
+Subtotal         → O(n)
+Ticket counting  → O(n)
+```
+
+Therefore the overall calculation is:
+
+```text
+Time  → O(n)
+Space → O(n)
+```
+
+This is more than sufficient for a cinema booking request, while remaining straightforward to reason about.
+
+---
+
+# 18. Error handling
+
+The API returns a clear `400` response for invalid booking input.
+
+Examples include:
+
+```text
+At least one ticket is required.
+Unknown tier.
+Quantity must be a positive integer.
+Recliner tickets are sold out.
+```
+
+Unknown routes return:
+
+```text
+404 Route not found.
+```
+
+This gives the client a predictable API contract.
+
+---
+
+# 19. Security and repository hygiene
+
+The repository should never contain:
+
+```text
+API keys
+Passwords
+.env secrets
+Private credentials
+node_modules
+Generated build artifacts
+```
+
+`.gitignore` protects common local/generated files.
+
+Before making the repository public, the code should be reviewed with:
+
+```bash
+git status
+git diff
+```
+
+to ensure no sensitive or accidental files are being committed.
+
+---
+
+# 20. Final verification before submission
+
+The intended verification sequence is:
+
+```bash
+npm install
+```
+
+then:
+
+```bash
+npm test
+```
+
+then:
+
+```bash
+npm run build
+```
+
+then:
+
+```bash
+npm start
+```
+
+Then manually verify the browser UI and API.
+
+Finally:
+
+```bash
+git status
+git diff
+git add .
+git commit -m "Build cinema ticket pricing engine"
+git push
+```
+
+The public repository root must contain:
+
+```text
+README.md
+REASONING.md
+AI_LOGS.md
+```
+
+---
+
+# 21. What I would explain to an evaluator
+
+The whole solution can be summarized as one engineering story:
+
+```text
+The requirement is a configurable cinema pricing engine.
+
+I separated configuration, money arithmetic, pricing rules,
+validation, API transport, and presentation.
+
+Money is stored as integer paise so the result is exact.
+
+Sold-out tiers are rejected in the business layer.
+
+Discounts are applied in a deterministic order and capped safely.
+
+Convenience fee is calculated per ticket.
+
+GST is calculated after the configured discounts and fee.
+
+The API exposes the calculation as a reusable service.
+
+The UI provides a clear line-by-line customer receipt.
+
+Automated tests cover normal cases and important boundaries.
+```
+
+That is the reasoning behind the architecture.
+
+---
+
+# 22. Important specification boundary
+
+The short problem statement provided with the project does not expose all numerical values.
+
+Therefore `src/config.ts` currently contains example configuration values.
+
+Before an actual assessment submission, the official `ticket_pricing` document must be used as the source of truth for:
+
+- exact ticket prices
+- exact festival discount
+- member percentage
+- member cap
+- convenience fee
+- GST
+- discount ordering
+- GST/tax base
+- rounding rules
+- any additional edge cases
+
+The code structure is deliberately designed so those values/rules can be changed without redesigning the application.
+
+---
+
+# 23. AI-assisted development principle
+
+AI is treated as a development assistant, not as an authority.
+
+A good workflow is:
+
+```text
+Understand requirement
+        ↓
+Ask AI to identify ambiguities
+        ↓
+Choose the business rules
+        ↓
+Ask AI for implementation help
+        ↓
+Inspect generated code
+        ↓
+Run tests
+        ↓
+Give actual errors to AI
+        ↓
+Fix
+        ↓
+Review edge cases
+        ↓
+Run tests again
+        ↓
+Submit
+```
+
+The final developer remains responsible for understanding and validating the code.
+
+This is particularly important for a builder round because a working-looking generated solution can still contain incorrect business rules.
+
+---
+
+# 24. Final design outcome
+
+The resulting project is intentionally:
+
+**Correct** — deterministic pricing and exact-paisa arithmetic.
+
+**Reusable** — configuration-driven rather than tied to one show.
+
+**Testable** — pricing logic is independent of HTTP/UI.
+
+**Defensive** — sold-out and invalid bookings are rejected.
+
+**Expressive** — the receipt explains where every rupee goes.
+
+**Responsive** — the interface works across common screen sizes.
+
+**Maintainable** — business logic is separated into small modules.
+
+**Practical** — no unnecessary infrastructure was added to a 2.5-hour builder task.
+
+The central objective remains simple:
+
+> **Given a valid booking and the cinema's pricing configuration, produce one correct, explainable, exact-paisa bill.**

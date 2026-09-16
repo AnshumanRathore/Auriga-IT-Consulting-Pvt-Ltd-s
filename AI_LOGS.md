@@ -1,36 +1,91 @@
-# AI Logs
+# AI Logs - I ask these questions for cross breifing 
 
-**IMPORTANT — this file must be replaced before you submit.**
+**Explain me this Project in 60 Seconds**
 
-The assessment requires the candidate's **complete, unmodified**
-conversation with the AI tool used during the assessment, pasted as-is.
-Any alteration leads to a mark deduction — so this cannot be a
-reconstructed, cleaned-up, or paraphrased summary. It has to be the real
-transcript.
+“I built a configurable Ticket Pricing Engine for a multiplex cinema counter. The system supports multiple ticket tiers such as Silver, Gold, and Recliner, checks ticket availability, applies a festival discount and a capped membership discount, adds a per-ticket convenience fee, calculates GST, and generates an itemized bill.
 
-**Do not submit this file as-is.** It is only a placeholder describing
-what needs to go here.
+I used TypeScript with Node.js and Express for the backend, Zod for request validation, Jest for testing, and HTML, CSS and JavaScript for the responsive frontend.
 
-## What to do
+One important design decision was handling all monetary calculations in integer paise instead of floating-point rupees, which helps avoid financial precision errors. I also separated configuration, money handling, business logic, API routes, frontend, and tests so that the engine is reusable for different cinema counters.
 
-1. Open the actual chat/session(s) you used while building this solution
-   (this conversation, a Copilot Chat panel in Codespaces, etc.).
-2. Copy or export the **entire** conversation, start to finish — every
-   prompt you sent and every full response the AI gave, including any
-   dead ends, mistakes, and corrections along the way. Don't cherry-pick
-   only the parts that make the process look clean.
-3. Replace everything below this line with that transcript, pasted
-   exactly as it appeared — no reformatting, no trimming, no summarizing.
-4. If you used more than one AI tool or more than one session, include
-   all of them, clearly separated and labeled, e.g.:
-   ```
-   ## Session 1 — Claude (Round 2 build)
-   ...full transcript...
+The main REST endpoint is a POST pricing quote API. It receives the booking details, validates them, runs the pricing engine, and returns the complete breakdown including discounts, fees, GST, and final total.”
 
-   ## Session 2 — GitHub Copilot (in-editor completions/chat)
-   ...full transcript...
-   ```
+**Explain Your Flow**
 
----
+“The flow starts when the customer selects ticket categories and quantities. The frontend sends this information to the backend. The backend first validates the request using Zod. Then the pricing engine checks ticket availability and calculates the ticket subtotal. After that, it applies the festival discount, then the capped membership discount if applicable. It calculates the per-ticket convenience fee and GST, and finally produces the total and itemized bill. All monetary calculations are performed in paise to maintain exact precision.”
 
-*(Paste your real, complete, unmodified conversation transcript here before submitting.)*
+**Where Is the Core Logic?**
+
+“The core logic is in pricing.ts. I kept the pricing rules separate from Express routes so that the business logic can be tested independently and reused by other interfaces in the future.”
+
+
+**How Did You Test It?**
+
+“I used Jest and tested both normal and edge cases. I tested normal bookings, membership discount caps, sold-out tickets, discount limits, and monetary precision. My objective was not only to test the happy path but also the business rules where incorrect calculations are more likely to occur.”
+
+**Why Integer Paise?**
+
+“Because JavaScript uses floating-point numbers for normal numeric calculations, financial calculations can suffer from precision issues. I represent ₹1 as 100 paise and perform the calculations using integers. I only format the result as rupees when displaying it.”
+
+**Why Zod?**
+
+“Zod gives me runtime validation for incoming API data. TypeScript provides compile-time type safety, but data coming from an HTTP request is still untrusted at runtime. Zod allows me to validate that data before passing it to the pricing engine.”
+
+**Difference in REASONING.md vs AI_LOGS.md**
+
+
+These two files have different purposes.
+
+*REASONING.md*
+
+This explains:
+
+Why I designed the solution this way.
+
+It should explain:
+
+Problem
+↓
+Requirements
+↓
+Design decisions
+↓
+Architecture
+↓
+Business rules
+↓
+Money handling
+↓
+Validation
+↓
+Testing
+↓
+Trade-offs
+
+This is your engineering explanation.
+
+*AI_LOGS.md*
+
+This is different.
+
+Auriga specifically asks for the complete AI conversation, pasted as-is and unmodified.
+
+Therefore, your actual submission should contain your real AI conversation.
+
+You should not create a fake conversation and present it as your actual AI log.
+
+**What If the Cinema Changes Its Pricing?**
+
+"Suppose tomorrow the cinema changes:
+
+Gold ticket price
+GST rate
+festival discount
+membership cap
+convenience fee
+
+Because these are configuration-driven, I don't need to redesign the entire application.
+
+I can update the configuration values while keeping the core architecture intact.
+
+That is one of the reasons I designed the system as a reusable pricing engine rather than a single hard-coded calculation script."
